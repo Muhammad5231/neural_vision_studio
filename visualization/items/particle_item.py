@@ -24,12 +24,10 @@ class ParticleItem(QObject, QGraphicsEllipseItem):
 
     def set_progress(self, val: float):
         self._progress = val
-        # Parametric linear interpolation: P = (1 - t)*P0 + t*P1
         x = (1.0 - val) * self.start_pos.x() + val * self.end_pos.x()
         y = (1.0 - val) * self.start_pos.y() + val * self.end_pos.y()
         self.setPos(QPointF(x, y))
 
     progress = Property(float, get_progress, set_progress)
 
-# Alias to ensure compatibility across modules
 SignalParticle = ParticleItem

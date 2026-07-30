@@ -1,8 +1,8 @@
-"""Interactive PySide6 Drawing Canvas for digit recognition."""
+"""Interactive PySide6 Drawing Canvas with Stroke-End Debounced Prediction."""
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PySide6.QtGui import QPainter, QPen, QImage, QColor
-from PySide6.QtCore import Qt, QPoint, Signal
+from PySide6.QtCore import Qt, QPoint, Signal, QTimer
 import numpy as np
 import cv2
 from config import CANVAS_SIZE, MNIST_GRID_SIZE
@@ -20,10 +20,17 @@ class DrawingCanvas(QWidget):
         self.last_point = QPoint()
         self.brush_size = 20
 
+        # Debounce timer: wait 350ms after last mouse movement before predicting
+        self.debounce_timer = QTimer(self)
+        self.debounce_timer.setSingleShot(True)
+        self.debounce_timer.setInterval(350)
+        self.debounce_timer.timeout.connect(self._emit_processed_image)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drawing = True
             self.last_point = event.position().toPoint()
+            self.debounce_timer.stop()
 
     def mouseMoveEvent(self, event):
         if (event.buttons() & Qt.MouseButton.LeftButton) and self.drawing:
@@ -37,27 +44,33 @@ class DrawingCanvas(QWidget):
                 Qt.PenJoinStyle.RoundJoin
             ))
             painter.drawLine(self.last_point, event.position().toPoint())
-            painter.end()  # Safely end painter to release lock
+            painter.end()
             self.last_point = event.position().toPoint()
             self.update()
-            self._emit_processed_image()
+            # Start debounce timer instead of predicting mid-stroke
+            self.debounce_timer.start()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drawing = False
-            self._emit_processed_image()
+            # Immediately trigger prediction on pen release
+            self.debounce_timer.start(50)
 
     def paintEvent(self, event):
         canvas_painter = QPainter(self)
         canvas_painter.drawImage(self.rect(), self.image, self.image.rect())
 
     def clear(self):
+        self.debounce_timer.stop()
         self.image.fill(QColor(0, 0, 0))
         self.update()
         self._emit_processed_image()
 
+    def trigger_predict_now(self):
+        self.debounce_timer.stop()
+        self._emit_processed_image()
+
     def _emit_processed_image(self):
-        # Convert QImage safely using byte copy to prevent memory locks
         width = self.image.width()
         height = self.image.height()
         ptr = self.image.bits()
@@ -79,11 +92,18 @@ class LeftPanel(GlassCard):
         
         self.canvas = DrawingCanvas()
         
-        self.clear_btn = QPushButton("Clear & Draw Again")
+        btn_layout = QHBoxLayout()
+        self.predict_btn = QPushButton("Predict")
+        self.predict_btn.clicked.connect(self.canvas.trigger_predict_now)
+        
+        self.clear_btn = QPushButton("Clear")
         self.clear_btn.setObjectName("clearBtn")
         self.clear_btn.clicked.connect(self.canvas.clear)
         
+        btn_layout.addWidget(self.predict_btn)
+        btn_layout.addWidget(self.clear_btn)
+        
         self.layout.addWidget(lbl_title)
         self.layout.addWidget(self.canvas, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.layout.addWidget(self.clear_btn)
+        self.layout.addLayout(btn_layout)
         self.layout.addStretch()
