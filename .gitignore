@@ -1,0 +1,21 @@
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# IDE / Editor Files
+.vscode/
+.idea/
+
+# PyTorch & Datasets
+*.pt
+*.pth
+data/
+
+# OS Specific
+.DS_Store
+Thumbs.db
