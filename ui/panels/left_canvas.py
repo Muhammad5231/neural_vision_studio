@@ -1,6 +1,6 @@
 """Interactive PySide6 Drawing Canvas for digit recognition."""
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PySide6.QtGui import QPainter, QPen, QImage, QColor
 from PySide6.QtCore import Qt, QPoint, Signal
 import numpy as np
@@ -14,12 +14,11 @@ class DrawingCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(CANVAS_SIZE, CANVAS_SIZE)
-        # Fixed Enum: QImage.Format.Format_RGB32
-        self.image = QImage(CANVAS_SIZE, CANVAS_SIZE, QImage.Format.Format_RGB32)
+        self.image = QImage(CANVAS_SIZE, CANVAS_SIZE, QImage.Format.Format_RGBA8888)
         self.image.fill(QColor(0, 0, 0))
         self.drawing = False
         self.last_point = QPoint()
-        self.brush_size = 18
+        self.brush_size = 20
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -29,8 +28,16 @@ class DrawingCanvas(QWidget):
     def mouseMoveEvent(self, event):
         if (event.buttons() & Qt.MouseButton.LeftButton) and self.drawing:
             painter = QPainter(self.image)
-            painter.setPen(QPen(QColor(255, 255, 255), self.brush_size, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(
+                QColor(255, 255, 255),
+                self.brush_size,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin
+            ))
             painter.drawLine(self.last_point, event.position().toPoint())
+            painter.end()  # Safely end painter to release lock
             self.last_point = event.position().toPoint()
             self.update()
             self._emit_processed_image()
@@ -38,6 +45,7 @@ class DrawingCanvas(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drawing = False
+            self._emit_processed_image()
 
     def paintEvent(self, event):
         canvas_painter = QPainter(self)
@@ -49,8 +57,12 @@ class DrawingCanvas(QWidget):
         self._emit_processed_image()
 
     def _emit_processed_image(self):
+        # Convert QImage safely using byte copy to prevent memory locks
+        width = self.image.width()
+        height = self.image.height()
         ptr = self.image.bits()
-        arr = np.array(ptr).reshape(CANVAS_SIZE, CANVAS_SIZE, 4)
+        
+        arr = np.array(ptr).reshape((height, width, 4)).copy()
         gray = cv2.cvtColor(arr, cv2.COLOR_RGBA2GRAY)
         resized = cv2.resize(gray, (MNIST_GRID_SIZE, MNIST_GRID_SIZE), interpolation=cv2.INTER_AREA)
         normalized = resized.astype(np.float32) / 255.0
@@ -62,12 +74,12 @@ class LeftPanel(GlassCard):
         super().__init__(parent)
         self.setFixedWidth(320)
         
-        lbl_title = QLabel("Input Canvas")
+        lbl_title = QLabel("Input Drawing Canvas")
         lbl_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #F8FAFC;")
         
         self.canvas = DrawingCanvas()
         
-        self.clear_btn = QPushButton("Clear Canvas")
+        self.clear_btn = QPushButton("Clear & Draw Again")
         self.clear_btn.setObjectName("clearBtn")
         self.clear_btn.clicked.connect(self.canvas.clear)
         
