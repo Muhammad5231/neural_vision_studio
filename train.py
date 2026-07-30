@@ -1,12 +1,4 @@
-"""Neural Vision Studio - Visual Interactive Training Application.
-
-Features:
-- Auto-feeding live training image canvas
-- Real-time animated neural network signal flow
-- Target vs Prediction (W/L Match/Mismatch) Stream
-- Live Loss & Accuracy Matplotlib plots
-- Auto-saves weights to mnist_weights.pt
-"""
+"""Neural Vision Studio - Interactive Visual Trainer for Digits, Alphabets, & Symbols."""
 
 import sys
 import os
@@ -29,17 +21,16 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from core.model import VisionMLP
-from config import APP_NAME, COLOR_BG_DARK, COLOR_CARD_BG, COLOR_ELECTRIC_BLUE, COLOR_CYAN, COLOR_PURPLE
+from config import APP_NAME, COLOR_BG_DARK, CLASS_LABELS, NUM_CLASSES
 from visualization.network_view import NetworkView
 
 
 class TrainingWorker(QThread):
-    # Emits sample_img_2d, target, pred, loss, acc, activations_dict
-    sample_processed = Signal(np.ndarray, int, int, float, float, dict)
+    sample_processed = Signal(np.ndarray, str, str, float, float, dict)
     epoch_completed = Signal(int, float, float)
     training_finished = Signal()
 
-    def __init__(self, model: VisionMLP, lr: float = 0.005, epochs: int = 10, delay_ms: int = 100, parent=None):
+    def __init__(self, model: VisionMLP, lr: float = 0.006, epochs: int = 5, delay_ms: int = 80, parent=None):
         super().__init__(parent)
         self.model = model
         self.lr = lr
@@ -48,7 +39,7 @@ class TrainingWorker(QThread):
         self.is_running = True
 
     def run(self):
-        images, labels = self._generate_training_dataset()
+        images, labels = self._generate_extended_dataset()
         optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         criterion = nn.CrossEntropyLoss()
 
@@ -61,8 +52,6 @@ class TrainingWorker(QThread):
             self.model.train()
             running_loss = 0.0
             correct_count = 0
-
-            # Shuffle dataset each epoch
             indices = np.random.permutation(total_samples)
 
             for step_idx, idx in enumerate(indices):
@@ -70,48 +59,45 @@ class TrainingWorker(QThread):
                     break
 
                 img_vec = images[idx:idx+1]
-                target_label = labels[idx:idx+1]
+                target_idx = labels[idx:idx+1]
 
                 optimizer.zero_grad()
                 logits = self.model(img_vec)
-                loss = criterion(logits, target_label)
+                loss = criterion(logits, target_idx)
                 loss.backward()
                 optimizer.step()
 
-                # Metrics
                 probs = F.softmax(logits, dim=1).squeeze()
-                pred_label = int(torch.argmax(probs).item())
-                target_val = int(target_label.item())
+                pred_idx = int(torch.argmax(probs).item())
+                target_val = int(target_idx.item())
 
                 running_loss += loss.item()
-                if pred_label == target_val:
+                if pred_idx == target_val:
                     correct_count += 1
 
                 current_loss = running_loss / (step_idx + 1)
                 current_acc = (correct_count / (step_idx + 1)) * 100.0
 
-                # Extract activations for visual animation
                 l1 = torch.relu(self.model.activations["layer1"]).squeeze()
                 l2 = torch.relu(self.model.activations["layer2"]).squeeze()
-                l3 = probs
-
-                img_2d = img_vec.squeeze().view(28, 28).numpy()
                 
+                img_2d = img_vec.squeeze().view(28, 28).numpy()
                 target_activations = {}
                 flat_input = img_2d.flatten()
+                
                 for i in range(16):
                     target_activations[(0, i)] = float(flat_input[i * 49])
                 for i in range(12):
                     target_activations[(1, i)] = float(l1[i % len(l1)])
                 for i in range(8):
                     target_activations[(2, i)] = float(l2[i % len(l2)])
-                for i in range(10):
-                    target_activations[(3, i)] = float(l3[i])
+                for i in range(12):
+                    target_activations[(3, i)] = float(probs[i % len(probs)])
 
-                # Emit sample to UI
-                self.sample_processed.emit(img_2d, target_val, pred_label, current_loss, current_acc, target_activations)
-                
-                # Sleep delay to allow visual animation
+                target_char = CLASS_LABELS[target_val] if target_val < len(CLASS_LABELS) else "?"
+                pred_char = CLASS_LABELS[pred_idx] if pred_idx < len(CLASS_LABELS) else "?"
+
+                self.sample_processed.emit(img_2d, target_char, pred_char, current_loss, current_acc, target_activations)
                 self.msleep(self.delay_ms)
 
             epoch_loss = running_loss / total_samples
@@ -119,7 +105,7 @@ class TrainingWorker(QThread):
             self.epoch_completed.emit(epoch, epoch_loss, epoch_acc)
 
         self.model.eval()
-        torch.save(self.model.state_dict(), "mnist_weights.pt")
+        torch.save(self.model.state_dict(), "extended_weights.pt")
         self.training_finished.emit()
 
     def set_delay(self, ms: int):
@@ -128,41 +114,23 @@ class TrainingWorker(QThread):
     def stop(self):
         self.is_running = False
 
-    def _generate_training_dataset(self):
+    def _generate_extended_dataset(self):
         images, labels = [], []
-        for digit in range(10):
-            for _ in range(25):  # 25 samples per digit = 250 visual training steps
+        for idx, char in enumerate(CLASS_LABELS):
+            for _ in range(5):  # 5 variations per class
                 img = np.zeros((28, 28), dtype=np.uint8)
-                thick = np.random.randint(2, 4)
-                if digit == 0:
-                    cv2.ellipse(img, (14, 14), (8, 10), 0, 0, 360, 255, thick)
-                elif digit == 1:
-                    cv2.line(img, (14, 5), (14, 23), 255, thick)
-                elif digit == 2:
-                    cv2.polylines(img, [np.array([[6, 8], [20, 8], [6, 22], [22, 22]])], False, 255, thick)
-                elif digit == 3:
-                    cv2.polylines(img, [np.array([[6, 6], [20, 6], [12, 14], [20, 20], [6, 22]])], False, 255, thick)
-                elif digit == 4:
-                    cv2.polylines(img, [np.array([[18, 5], [6, 16], [22, 16]])], False, 255, thick)
-                    cv2.line(img, (18, 5), (18, 23), 255, thick)
-                elif digit == 5:
-                    cv2.polylines(img, [np.array([[20, 6], [7, 6], [7, 13], [20, 15], [20, 22], [6, 22]])], False, 255, thick)
-                elif digit == 6:
-                    cv2.ellipse(img, (14, 17), (7, 6), 0, 0, 360, 255, thick)
-                    cv2.line(img, (7, 17), (16, 6), 255, thick)
-                elif digit == 7:
-                    cv2.line(img, (6, 6), (22, 6), 255, thick)
-                    cv2.line(img, (22, 6), (10, 23), 255, thick)
-                elif digit == 8:
-                    cv2.ellipse(img, (14, 10), (6, 5), 0, 0, 360, 255, thick)
-                    cv2.ellipse(img, (14, 18), (7, 6), 0, 0, 360, 255, thick)
-                elif digit == 9:
-                    cv2.ellipse(img, (14, 10), (6, 5), 0, 0, 360, 255, thick)
-                    cv2.line(img, (20, 10), (12, 23), 255, thick)
-
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.75
+                thick = np.random.randint(1, 3)
+                
+                text_size = cv2.getTextSize(char, font, font_scale, thick)[0]
+                text_x = max(2, (28 - text_size[0]) // 2)
+                text_y = min(24, (28 + text_size[1]) // 2)
+                
+                cv2.putText(img, char, (text_x, text_y), font, font_scale, 255, thick, cv2.LINE_AA)
                 img = cv2.GaussianBlur(img, (3, 3), 0)
                 images.append(torch.tensor((img.astype(np.float32) / 255.0).flatten()))
-                labels.append(digit)
+                labels.append(idx)
 
         return torch.stack(images), torch.tensor(labels, dtype=torch.long)
 
@@ -199,7 +167,6 @@ class TrainingPlotCanvas(FigureCanvas):
 
 
 class LiveInputDisplay(QFrame):
-    """Displays the auto-feeding training sample and current prediction result."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet("""
@@ -212,7 +179,7 @@ class LiveInputDisplay(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
 
-        lbl_header = QLabel("Auto-Feeding Input")
+        lbl_header = QLabel("Auto-Feeding Character")
         lbl_header.setFont(QFont("Inter", 11, QFont.Weight.Bold))
         lbl_header.setStyleSheet("color: #06B6D4;")
 
@@ -221,7 +188,7 @@ class LiveInputDisplay(QFrame):
         self.lbl_image.setStyleSheet("background-color: #000000; border-radius: 8px;")
         self.lbl_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.lbl_target = QLabel("Target Label: -")
+        self.lbl_target = QLabel("Target: -")
         self.lbl_target.setFont(QFont("JetBrains Mono", 10, QFont.Weight.Bold))
         self.lbl_target.setStyleSheet("color: #F8FAFC;")
 
@@ -240,8 +207,7 @@ class LiveInputDisplay(QFrame):
         layout.addWidget(self.lbl_pred)
         layout.addWidget(self.lbl_match)
 
-    def update_sample(self, img_2d: np.ndarray, target: int, pred: int):
-        # Render 28x28 numpy array to QPixmap
+    def update_sample(self, img_2d: np.ndarray, target: str, pred: str):
         scaled_img = (img_2d * 255.0).astype(np.uint8)
         colored_img = cv2.cvtColor(scaled_img, cv2.COLOR_GRAY2RGB)
         h, w, c = colored_img.shape
@@ -249,8 +215,8 @@ class LiveInputDisplay(QFrame):
         pixmap = QPixmap.fromImage(qimg).scaled(160, 160, Qt.AspectRatioMode.KeepAspectRatio)
         
         self.lbl_image.setPixmap(pixmap)
-        self.lbl_target.setText(f"Target Label: {target}")
-        self.lbl_pred.setText(f"Predicted: {pred}")
+        self.lbl_target.setText(f"Target: '{target}'")
+        self.lbl_pred.setText(f"Predicted: '{pred}'")
 
         if target == pred:
             self.lbl_match.setText("MATCH ✅ (WIN)")
@@ -263,7 +229,7 @@ class LiveInputDisplay(QFrame):
 class VisualTrainingStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} — Interactive Visual Training Studio")
+        self.setWindowTitle(f"{APP_NAME} — Extended Vocabulary Trainer")
         self.resize(1400, 850)
 
         self.model = VisionMLP()
@@ -285,7 +251,7 @@ class VisualTrainingStudioWindow(QMainWindow):
         main_layout.setContentsMargins(12, 12, 12, 12)
         main_layout.setSpacing(12)
 
-        # ----------------- LEFT PANEL: Input Display & Controls -----------------
+        # Left Panel
         left_panel = QWidget()
         left_panel.setFixedWidth(280)
         left_layout = QVBoxLayout(left_panel)
@@ -297,17 +263,17 @@ class VisualTrainingStudioWindow(QMainWindow):
         controls_card.setStyleSheet("background: rgba(18, 22, 31, 0.9); border: 1px solid #334155; border-radius: 12px; padding: 10px;")
         controls_layout = QVBoxLayout(controls_card)
 
-        lbl_ctrl_title = QLabel("Training Settings")
+        lbl_ctrl_title = QLabel("Vocabulary Controls")
         lbl_ctrl_title.setFont(QFont("Inter", 11, QFont.Weight.Bold))
         lbl_ctrl_title.setStyleSheet("color: #007AFF;")
 
-        self.lbl_speed = QLabel("Step Speed: 100 ms")
+        self.lbl_speed = QLabel("Step Speed: 80 ms")
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
-        self.speed_slider.setRange(20, 400)
-        self.speed_slider.setValue(100)
+        self.speed_slider.setRange(20, 300)
+        self.speed_slider.setValue(80)
         self.speed_slider.valueChanged.connect(self._on_speed_changed)
 
-        self.btn_start = QPushButton("Start Live Training")
+        self.btn_start = QPushButton("Start Vocabulary Training")
         self.btn_start.setStyleSheet("background-color: #007AFF; color: white; padding: 10px; border-radius: 8px; font-weight: bold;")
         self.btn_start.clicked.connect(self.start_training)
 
@@ -332,7 +298,7 @@ class VisualTrainingStudioWindow(QMainWindow):
         left_layout.addWidget(controls_card)
         left_layout.addStretch()
 
-        # ----------------- CENTER PANEL: Animated Network View -----------------
+        # Center Panel
         center_panel = QWidget()
         center_layout = QVBoxLayout(center_panel)
         center_layout.setContentsMargins(0, 0, 0, 0)
@@ -340,7 +306,7 @@ class VisualTrainingStudioWindow(QMainWindow):
         self.network_view = NetworkView()
         center_layout.addWidget(self.network_view)
 
-        # ----------------- RIGHT PANEL: Live Charts & Match Stream -----------------
+        # Right Panel
         right_panel = QWidget()
         right_panel.setFixedWidth(320)
         right_layout = QVBoxLayout(right_panel)
@@ -352,7 +318,7 @@ class VisualTrainingStudioWindow(QMainWindow):
         stream_card.setStyleSheet("background: rgba(18, 22, 31, 0.9); border: 1px solid #334155; border-radius: 12px; padding: 8px;")
         stream_layout = QVBoxLayout(stream_card)
 
-        lbl_stream = QLabel("Live Training Results Log")
+        lbl_stream = QLabel("Character Log Stream")
         lbl_stream.setFont(QFont("Inter", 10, QFont.Weight.Bold))
         lbl_stream.setStyleSheet("color: #06B6D4;")
 
@@ -374,7 +340,6 @@ class VisualTrainingStudioWindow(QMainWindow):
         right_layout.addWidget(self.chart_canvas)
         right_layout.addWidget(stream_card, stretch=1)
 
-        # Assemble layout
         main_layout.addWidget(left_panel)
         main_layout.addWidget(center_panel, stretch=1)
         main_layout.addWidget(right_panel)
@@ -405,26 +370,21 @@ class VisualTrainingStudioWindow(QMainWindow):
             self.worker.stop()
             self.btn_start.setEnabled(True)
 
-    def _on_sample_step(self, img_2d: np.ndarray, target: int, pred: int, loss: float, acc: float, activations: dict):
+    def _on_sample_step(self, img_2d: np.ndarray, target: str, pred: str, loss: float, acc: float, activations: dict):
         self.step_counter += 1
         
-        # 1. Update Left Display
         self.input_display.update_sample(img_2d, target, pred)
-
-        # 2. Trigger Network View Signal Flow
         self.network_view.animate_signal_flow(activations)
 
-        # 3. Update Charts
         self.step_history.append(self.step_counter)
         self.loss_history.append(loss)
         self.acc_history.append(acc)
 
-        if len(self.step_history) % 2 == 0:  # Plot every 2 steps for smoothness
+        if len(self.step_history) % 2 == 0:
             self.chart_canvas.update_charts(self.step_history, self.loss_history, self.acc_history)
 
-        # 4. Log Stream Result
         match_str = "MATCH" if target == pred else "LOSS"
-        item = QListWidgetItem(f"[{match_str}] Target:{target} | Pred:{pred} | Acc:{acc:.1f}%")
+        item = QListWidgetItem(f"[{match_str}] Target:'{target}' | Pred:'{pred}' | Acc:{acc:.1f}%")
         if target == pred:
             item.setForeground(QColor("#06B6D4"))
         else:
@@ -438,7 +398,7 @@ class VisualTrainingStudioWindow(QMainWindow):
 
     def _on_training_finished(self):
         self.btn_start.setEnabled(True)
-        item = QListWidgetItem("=== TRAINING COMPLETED & SAVED ===")
+        item = QListWidgetItem("=== VOCABULARY WEIGHTS SAVED ===")
         item.setForeground(QColor("#007AFF"))
         self.log_list.addItem(item)
 

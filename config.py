@@ -3,7 +3,7 @@
 from PySide6.QtGui import QColor, QFont
 
 APP_NAME = "Neural Vision Studio"
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.0.0"
 
 # Target FPS and Rendering Parameters
 TARGET_FPS = 60
@@ -24,6 +24,15 @@ COLOR_TEXT_SECONDARY = QColor("#94A3B8")
 # Canvas Parameters
 CANVAS_SIZE = 280
 MNIST_GRID_SIZE = 28
+
+# Extended Vocabulary (72 Classes: 10 Digits + 26 Upper + 26 Lower + 10 Symbols)
+DIGITS = [str(i) for i in range(10)]
+UPPERCASE = [chr(i) for i in range(ord('A'), ord('Z') + 1)]
+LOWERCASE = [chr(i) for i in range(ord('a'), ord('z') + 1)]
+SYMBOLS = ['!', '@', '#', '$', '%', '+', '-', '=', '?', '&']
+
+CLASS_LABELS = DIGITS + UPPERCASE + LOWERCASE + SYMBOLS
+NUM_CLASSES = len(CLASS_LABELS)
 
 # Fonts
 FONT_PRIMARY = QFont("Inter", 10)

@@ -1,4 +1,4 @@
-"""Hardware-accelerated Viewport with Frame Buffer Clearing and Click Inspection Signals."""
+"""Hardware-Accelerated Network View with Adaptive Class Layout Scaling."""
 
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsTextItem
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -8,7 +8,7 @@ from PySide6.QtGui import QPainter, QWheelEvent, QFont, QColor, QBrush
 from visualization.items.neuron_item import NeuronItem
 from visualization.items.synapse_item import SynapseItem
 from visualization.items.particle_item import ParticleItem
-from config import COLOR_BG_DARK
+from config import COLOR_BG_DARK, NUM_CLASSES
 
 class NetworkView(QGraphicsView):
     neuron_clicked = Signal(int, int, float)
@@ -39,7 +39,8 @@ class NetworkView(QGraphicsView):
         self.nodes = {}
         self.synapses = []
         self.active_particles = []
-        self.layers_config = [16, 12, 8, 10]
+        # Sampled topology: 16 Input, 12 Hidden 1, 8 Hidden 2, 12 Output nodes (Top classes)
+        self.layers_config = [16, 12, 8, 12]
         self.current_anim_group = None
         
         self.build_network_topology(self.layers_config)
@@ -51,11 +52,11 @@ class NetworkView(QGraphicsView):
         self.active_particles.clear()
         
         x_spacing = 200
-        y_spacing = 42
-        layer_names = ["Input Layer", "Hidden Layer 1", "Hidden Layer 2", "Output Layer"]
+        layer_names = ["Input Layer", "Hidden Layer 1", "Hidden Layer 2", "Output Vocabulary"]
 
         for layer_idx, num_neurons in enumerate(layers):
             x = layer_idx * x_spacing
+            y_spacing = 38 if layer_idx < 3 else max(14, 460 / num_neurons)
             y_offset = -((num_neurons - 1) * y_spacing) / 2.0
 
             lbl = QGraphicsTextItem(layer_names[layer_idx])
@@ -66,7 +67,7 @@ class NetworkView(QGraphicsView):
 
             for n_idx in range(num_neurons):
                 y = y_offset + (n_idx * y_spacing)
-                node = NeuronItem(layer_idx=layer_idx, neuron_idx=n_idx)
+                node = NeuronItem(layer_idx=layer_idx, neuron_idx=n_idx, radius=14.0 if layer_idx < 3 else 11.0)
                 node.setPos(x, y)
                 node.clicked.connect(lambda l, n, a: self.neuron_clicked.emit(l, n, a))
                 self.scene.addItem(node)
