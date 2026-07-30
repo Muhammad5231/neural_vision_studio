@@ -1,11 +1,11 @@
 """Animated signal particles traveling along synaptic pathways."""
 
 from PySide6.QtWidgets import QGraphicsEllipseItem
-from PySide6.QtGui import QBrush, QPen, QColor
+from PySide6.QtGui import QBrush, QPen
 from PySide6.QtCore import Qt, QPointF, Property, QObject
 from config import COLOR_CYAN
 
-class SignalParticle(QObject, QGraphicsEllipseItem):
+class ParticleItem(QObject, QGraphicsEllipseItem):
     def __init__(self, start_pos: QPointF, end_pos: QPointF, parent=None):
         QObject.__init__(self)
         QGraphicsEllipseItem.__init__(self, -4, -4, 8, 8, parent)
@@ -30,3 +30,6 @@ class SignalParticle(QObject, QGraphicsEllipseItem):
         self.setPos(QPointF(x, y))
 
     progress = Property(float, get_progress, set_progress)
+
+# Alias to ensure compatibility across modules
+SignalParticle = ParticleItem
