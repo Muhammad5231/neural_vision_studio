@@ -1,7 +1,8 @@
-"""PyTorch Multilayer Perceptron with activation hooks for visualization."""
+"""PyTorch Multilayer Perceptron with weight initialization and hook extraction."""
 
 import torch
 import torch.nn as nn
+import torch.nn.init as init
 from typing import Dict, List
 
 class VisionMLP(nn.Module):
@@ -14,7 +15,16 @@ class VisionMLP(nn.Module):
         self.fc3 = nn.Linear(hidden2, output_dim)
         
         self.activations: Dict[str, torch.Tensor] = {}
+        self._init_weights()
         self._register_hooks()
+
+    def _init_weights(self):
+        """Xavier initialization to ensure dynamic response to drawing inputs."""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    init.constant_(m.bias, 0.01)
 
     def _register_hooks(self):
         def get_hook(layer_name: str):

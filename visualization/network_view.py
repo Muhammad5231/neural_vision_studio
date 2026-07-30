@@ -1,4 +1,4 @@
-"""Hardware-accelerated Viewport with Safe Particle Cleanup & Clamped Zooming."""
+"""Hardware-accelerated Viewport with Safe Animation Cancellation and Particle Cleanup."""
 
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsTextItem
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -32,15 +32,17 @@ class NetworkView(QGraphicsView):
         self.current_scale = 1.0
         self.nodes = {}
         self.synapses = []
+        self.active_particles = []
         self.layers_config = [16, 12, 8, 10]
+        self.current_anim_group = None
         
-        # Build initial topology ONCE
         self.build_network_topology(self.layers_config)
 
     def build_network_topology(self, layers: list[int]):
         self.scene.clear()
         self.nodes.clear()
         self.synapses.clear()
+        self.active_particles.clear()
         
         x_spacing = 200
         y_spacing = 42
@@ -74,14 +76,22 @@ class NetworkView(QGraphicsView):
 
         self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
 
-    def _remove_particle(self, particle: ParticleItem):
-        """Safely removes particle from QGraphicsScene to prevent zoom duplicates."""
-        if particle and particle.scene() == self.scene:
-            self.scene.removeItem(particle)
-            particle.deleteLater()
+    def stop_animations(self):
+        """Stops ongoing animation groups and clears lingering particle items from canvas."""
+        if self.current_anim_group and self.current_anim_group.state() == QSequentialAnimationGroup.State.Running:
+            self.current_anim_group.stop()
+            self.current_anim_group.clear()
+        
+        for item in list(self.scene.items()):
+            if isinstance(item, ParticleItem):
+                self.scene.removeItem(item)
+        self.active_particles.clear()
 
     def animate_signal_flow(self, target_activations: dict[tuple[int, int], float]):
-        main_seq = QSequentialAnimationGroup(self)
+        # Always clean up prior active animations
+        self.stop_animations()
+
+        self.current_anim_group = QSequentialAnimationGroup(self)
 
         for layer_idx in range(len(self.layers_config)):
             layer_neuron_group = QParallelAnimationGroup(self)
@@ -90,13 +100,13 @@ class NetworkView(QGraphicsView):
                 target_val = target_activations.get((layer_idx, n_idx), 0.0)
                 
                 anim = QPropertyAnimation(node, b"activation")
-                anim.setDuration(200)
+                anim.setDuration(180)
                 anim.setStartValue(node.get_activation())
                 anim.setEndValue(target_val)
                 anim.setEasingCurve(QEasingCurve.Type.OutQuad)
                 layer_neuron_group.addAnimation(anim)
             
-            main_seq.addAnimation(layer_neuron_group)
+            self.current_anim_group.addAnimation(layer_neuron_group)
 
             if layer_idx < len(self.layers_config) - 1:
                 particle_group = QParallelAnimationGroup(self)
@@ -105,20 +115,26 @@ class NetworkView(QGraphicsView):
                 for _, p1, p2 in layer_synapses[::2]:
                     particle = ParticleItem(p1, p2)
                     self.scene.addItem(particle)
+                    self.active_particles.append(particle)
                     
                     p_anim = QPropertyAnimation(particle, b"progress")
-                    p_anim.setDuration(160)
+                    p_anim.setDuration(140)
                     p_anim.setStartValue(0.0)
                     p_anim.setEndValue(1.0)
                     p_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
                     
-                    # Explicit lambda closure binding fix
                     p_anim.finished.connect(lambda p=particle: self._remove_particle(p))
                     particle_group.addAnimation(p_anim)
 
-                main_seq.addAnimation(particle_group)
+                self.current_anim_group.addAnimation(particle_group)
 
-        main_seq.start()
+        self.current_anim_group.start()
+
+    def _remove_particle(self, particle: ParticleItem):
+        if particle in self.active_particles:
+            self.active_particles.remove(particle)
+        if particle and particle.scene() == self.scene:
+            self.scene.removeItem(particle)
 
     def wheelEvent(self, event: QWheelEvent):
         zoom_in_factor = 1.12

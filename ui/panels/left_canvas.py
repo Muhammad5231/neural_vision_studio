@@ -1,4 +1,4 @@
-"""Interactive PySide6 Drawing Canvas with Stroke-End Debounced Prediction."""
+"""Interactive Drawing Canvas with MNIST Bounding-Box Centering and Clean Re-predictions."""
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PySide6.QtGui import QPainter, QPen, QImage, QColor
@@ -18,12 +18,12 @@ class DrawingCanvas(QWidget):
         self.image.fill(QColor(0, 0, 0))
         self.drawing = False
         self.last_point = QPoint()
-        self.brush_size = 20
+        self.brush_size = 22
 
-        # Debounce timer: wait 350ms after last mouse movement before predicting
+        # Debounce timer to trigger clean prediction after mouse stroke completes
         self.debounce_timer = QTimer(self)
         self.debounce_timer.setSingleShot(True)
-        self.debounce_timer.setInterval(350)
+        self.debounce_timer.setInterval(300)
         self.debounce_timer.timeout.connect(self._emit_processed_image)
 
     def mousePressEvent(self, event):
@@ -47,13 +47,11 @@ class DrawingCanvas(QWidget):
             painter.end()
             self.last_point = event.position().toPoint()
             self.update()
-            # Start debounce timer instead of predicting mid-stroke
             self.debounce_timer.start()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drawing = False
-            # Immediately trigger prediction on pen release
             self.debounce_timer.start(50)
 
     def paintEvent(self, event):
@@ -70,6 +68,28 @@ class DrawingCanvas(QWidget):
         self.debounce_timer.stop()
         self._emit_processed_image()
 
+    def _preprocess_mnist(self, gray_img: np.ndarray) -> np.ndarray:
+        """Crops drawn digit bounding box and centers it into 28x28 grid like real MNIST."""
+        if np.max(gray_img) == 0:
+            return np.zeros((MNIST_GRID_SIZE, MNIST_GRID_SIZE), dtype=np.float32)
+
+        coords = cv2.findNonZero(gray_img)
+        x, y, w, h = cv2.boundingRect(coords)
+        cropped = gray_img[y:y+h, x:x+w]
+
+        # Aspect ratio resize to fit within 20x20 box inside 28x28 canvas
+        max_dim = max(w, h)
+        scale = 20.0 / max_dim
+        new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        resized = cv2.resize(cropped, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        padded = np.zeros((28, 28), dtype=np.uint8)
+        start_x = (28 - new_w) // 2
+        start_y = (28 - new_h) // 2
+        padded[start_y:start_y+new_h, start_x:start_x+new_w] = resized
+
+        return padded.astype(np.float32) / 255.0
+
     def _emit_processed_image(self):
         width = self.image.width()
         height = self.image.height()
@@ -77,9 +97,8 @@ class DrawingCanvas(QWidget):
         
         arr = np.array(ptr).reshape((height, width, 4)).copy()
         gray = cv2.cvtColor(arr, cv2.COLOR_RGBA2GRAY)
-        resized = cv2.resize(gray, (MNIST_GRID_SIZE, MNIST_GRID_SIZE), interpolation=cv2.INTER_AREA)
-        normalized = resized.astype(np.float32) / 255.0
-        self.canvas_updated.emit(normalized)
+        processed = self._preprocess_mnist(gray)
+        self.canvas_updated.emit(processed)
 
 
 class LeftPanel(GlassCard):
@@ -93,7 +112,7 @@ class LeftPanel(GlassCard):
         self.canvas = DrawingCanvas()
         
         btn_layout = QHBoxLayout()
-        self.predict_btn = QPushButton("Predict")
+        self.predict_btn = QPushButton("Predict Digit")
         self.predict_btn.clicked.connect(self.canvas.trigger_predict_now)
         
         self.clear_btn = QPushButton("Clear")
