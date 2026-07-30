@@ -1,4 +1,4 @@
-"""Interactive Drawing Canvas with Center-of-Mass MNIST Normalization."""
+"""Interactive Canvas with Center-of-Mass MNIST Formatting."""
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PySide6.QtGui import QPainter, QPen, QImage, QColor
@@ -18,11 +18,11 @@ class DrawingCanvas(QWidget):
         self.image.fill(QColor(0, 0, 0))
         self.drawing = False
         self.last_point = QPoint()
-        self.brush_size = 22
+        self.brush_size = 24
 
         self.debounce_timer = QTimer(self)
         self.debounce_timer.setSingleShot(True)
-        self.debounce_timer.setInterval(280)
+        self.debounce_timer.setInterval(250)
         self.debounce_timer.timeout.connect(self._emit_processed_image)
 
     def mousePressEvent(self, event):
@@ -51,7 +51,7 @@ class DrawingCanvas(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drawing = False
-            self.debounce_timer.start(40)
+            self.debounce_timer.start(30)
 
     def paintEvent(self, event):
         canvas_painter = QPainter(self)
@@ -68,26 +68,36 @@ class DrawingCanvas(QWidget):
         self._emit_processed_image()
 
     def _preprocess_mnist(self, gray_img: np.ndarray) -> np.ndarray:
-        if np.max(gray_img) < 10:
+        """Standard MNIST Center-of-Mass normalization pipeline."""
+        if np.max(gray_img) < 15:
             return np.zeros((MNIST_GRID_SIZE, MNIST_GRID_SIZE), dtype=np.float32)
 
-        # Smooth strokes and find bounding box
-        blurred = cv2.GaussianBlur(gray_img, (5, 5), 0)
-        coords = cv2.findNonZero(blurred)
+        # 1. Bounding box cropping
+        coords = cv2.findNonZero(gray_img)
         x, y, w, h = cv2.boundingRect(coords)
-        cropped = blurred[y:y+h, x:x+w]
+        cropped = gray_img[y:y+h, x:x+w]
 
-        # Fit inside 20x20 bounding box
+        # 2. Aspect ratio scaling into 20x20 box
         max_dim = max(w, h)
         scale = 20.0 / max_dim
         new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
         resized = cv2.resize(cropped, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-        # Center on 28x28 grid
+        # 3. Canvas placement
         padded = np.zeros((28, 28), dtype=np.uint8)
         start_x = (28 - new_w) // 2
         start_y = (28 - new_h) // 2
         padded[start_y:start_y+new_h, start_x:start_x+new_w] = resized
+
+        # 4. Center of mass alignment
+        M = cv2.moments(padded)
+        if M["m00"] > 0:
+            cx = M["m10"] / M["m00"]
+            cy = M["m01"] / M["m00"]
+            shift_x = int(np.round(14 - cx))
+            shift_y = int(np.round(14 - cy))
+            M_translation = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+            padded = cv2.warpAffine(padded, M_translation, (28, 28))
 
         return padded.astype(np.float32) / 255.0
 

@@ -1,4 +1,4 @@
-"""Main Layout Orchestrator connecting model, canvas, and neural scene."""
+"""Main Window connecting Model Inference and Visualization Engine."""
 
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout
 from PySide6.QtCore import QFile, QTextStream
@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
 
         self.right_panel.update_probabilities(probs)
 
-        # Extract real activations
+        # Extract intermediate layer activations
         l1 = torch.relu(self.model.activations["layer1"]).squeeze()
         l2 = torch.relu(self.model.activations["layer2"]).squeeze()
         l3 = F.softmax(self.model.activations["layer3"], dim=1).squeeze()
@@ -77,7 +77,6 @@ class MainWindow(QMainWindow):
         for idx in range(10):
             target_activations[(3, idx)] = float(l3[idx])
 
-        # Trigger energy particle signal animation
         self.network_view.animate_signal_flow(target_activations)
 
     def _load_stylesheet(self):

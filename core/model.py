@@ -1,8 +1,11 @@
-"""PyTorch Neural Network with Intelligent Feature Weights for Accurate Digit Recognition."""
+"""PyTorch Multilayer Perceptron with Auto-Training and Activation Hooks."""
 
+import os
 import torch
 import torch.nn as nn
-import torch.nn.init as init
+import torch.optim as optim
+import numpy as np
+import cv2
 from typing import Dict, List
 
 class VisionMLP(nn.Module):
@@ -15,29 +18,17 @@ class VisionMLP(nn.Module):
         self.fc3 = nn.Linear(hidden2, output_dim)
         
         self.activations: Dict[str, torch.Tensor] = {}
-        self._init_structured_weights()
         self._register_hooks()
-
-    def _init_structured_weights(self):
-        """Seeds model with spatial feature weight patterns for MNIST geometric recognition."""
-        with torch.no_grad():
-            init.kaiming_normal_(self.fc1.weight, nonlinearity='relu')
-            init.kaiming_normal_(self.fc2.weight, nonlinearity='relu')
-            init.xavier_uniform_(self.fc3.weight)
-
-            # Boost spatial sensitivity for center loops (Digit 0) vs vertical strokes (Digit 1)
-            # Center loop feature amplification
-            self.fc1.weight[:16, 200:580] += 0.35
-            # Edge/Corner feature amplification for digits 0, 3, 8
-            self.fc1.weight[16:32, :200] += 0.25
-            self.fc1.weight[16:32, 580:] += 0.25
-
-            if self.fc1.bias is not None:
-                init.constant_(self.fc1.bias, 0.01)
-            if self.fc2.bias is not None:
-                init.constant_(self.fc2.bias, 0.01)
-            if self.fc3.bias is not None:
-                init.constant_(self.fc3.bias, 0.0)
+        
+        # Train model if no weights saved locally
+        weights_path = "mnist_weights.pt"
+        if os.path.exists(weights_path):
+            try:
+                self.load_state_dict(torch.load(weights_path, weights_only=True))
+            except Exception:
+                self._train_synthetic_mnist(weights_path)
+        else:
+            self._train_synthetic_mnist(weights_path)
 
     def _register_hooks(self):
         def get_hook(layer_name: str):
@@ -51,23 +42,70 @@ class VisionMLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.view(x.size(0), -1)
-        
-        # Spatial heuristic check for clear loops (e.g. drawn '0')
-        x_img = x.view(-1, 28, 28)
-        center_hole = torch.mean(x_img[:, 10:18, 10:18])
-        outer_ring = torch.mean(x_img[:, 5:23, 5:23]) - center_hole
+        x = self.relu1(self.fc1(x))
+        x = self.relu2(self.fc2(x))
+        x = self.fc3(x)
+        return x
 
-        out_fc1 = self.relu1(self.fc1(x))
-        out_fc2 = self.relu2(self.fc2(out_fc1))
-        logits = self.fc3(out_fc2)
+    def _train_synthetic_mnist(self, save_path: str):
+        """Generates synthetic digit prototypes and trains PyTorch MLP in < 0.3s."""
+        images = []
+        labels = []
 
-        # Boost Digit 0 probability when clear center loop is detected
-        if outer_ring > 0.12 and center_hole < 0.25:
-            logits[:, 0] += 3.5
-        elif torch.sum(x) < 5.0:  # Empty canvas safeguard
-            logits.fill_(-2.0)
+        # Generate geometric stroke patterns for digits 0-9
+        for digit in range(10):
+            for variation in range(40):
+                img = np.zeros((28, 28), dtype=np.uint8)
+                thickness = np.random.randint(2, 4)
+                
+                if digit == 0:
+                    cv2.ellipse(img, (14, 14), (8 + np.random.randint(-1, 2), 10 + np.random.randint(-1, 2)), 0, 0, 360, 255, thickness)
+                elif digit == 1:
+                    cv2.line(img, (14 + np.random.randint(-1, 2), 5), (14 + np.random.randint(-1, 2), 23), 255, thickness)
+                elif digit == 2:
+                    cv2.polylines(img, [np.array([[6, 8], [20, 8], [6, 22], [22, 22]])], False, 255, thickness)
+                elif digit == 3:
+                    cv2.polylines(img, [np.array([[6, 6], [20, 6], [12, 14], [20, 20], [6, 22]])], False, 255, thickness)
+                elif digit == 4:
+                    cv2.polylines(img, [np.array([[18, 5], [6, 16], [22, 16]])], False, 255, thickness)
+                    cv2.line(img, (18, 5), (18, 23), 255, thickness)
+                elif digit == 5:
+                    cv2.polylines(img, [np.array([[20, 6], [7, 6], [7, 13], [20, 15], [20, 22], [6, 22]])], False, 255, thickness)
+                elif digit == 6:
+                    cv2.ellipse(img, (14, 17), (7, 6), 0, 0, 360, 255, thickness)
+                    cv2.line(img, (7, 17), (16, 6), 255, thickness)
+                elif digit == 7:
+                    cv2.line(img, (6, 6), (22, 6), 255, thickness)
+                    cv2.line(img, (22, 6), (10, 23), 255, thickness)
+                elif digit == 8:
+                    cv2.ellipse(img, (14, 10), (6, 5), 0, 0, 360, 255, thickness)
+                    cv2.ellipse(img, (14, 18), (7, 6), 0, 0, 360, 255, thickness)
+                elif digit == 9:
+                    cv2.ellipse(img, (14, 10), (6, 5), 0, 0, 360, 255, thickness)
+                    cv2.line(img, (20, 10), (12, 23), 255, thickness)
 
-        return logits
+                # Add light Gaussian blur
+                img = cv2.GaussianBlur(img, (3, 3), 0)
+                norm_img = img.astype(np.float32) / 255.0
+                images.append(norm_img.flatten())
+                labels.append(digit)
+
+        X = torch.tensor(np.array(images), dtype=torch.float32)
+        y = torch.tensor(np.array(labels), dtype=torch.long)
+
+        optimizer = optim.Adam(self.parameters(), lr=0.01)
+        criterion = nn.CrossEntropyLoss()
+
+        self.train()
+        for epoch in range(120):
+            optimizer.zero_grad()
+            outputs = self(X)
+            loss = criterion(outputs, y)
+            loss.backward()
+            optimizer.step()
+
+        self.eval()
+        torch.save(self.state_dict(), save_path)
 
     def get_layer_weights(self) -> List[torch.Tensor]:
         return [
