@@ -1,4 +1,4 @@
-"""Main Window connecting Model Inference and Visualization Engine."""
+"""Main Layout Orchestrator with Interactive Neuron Inspection Dialog."""
 
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout
 from PySide6.QtCore import QFile, QTextStream
@@ -12,6 +12,7 @@ from ui.panels.left_canvas import LeftPanel
 from ui.panels.right_control import RightPanel
 from ui.panels.status_bar import StatusBar
 from visualization.network_view import NetworkView
+from ui.components.neuron_inspector import NeuronInspectorDialog
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -42,7 +43,10 @@ class MainWindow(QMainWindow):
         self.network_view = NetworkView()
         self.status_bar = StatusBar()
 
+        # Wire Signals
         self.left_panel.canvas.canvas_updated.connect(self._handle_canvas_update)
+        self.left_panel.reload_requested.connect(self._reload_weights)
+        self.network_view.neuron_clicked.connect(self._open_neuron_inspector)
 
         content_layout.addWidget(self.left_panel)
         content_layout.addWidget(self.network_view, stretch=1)
@@ -50,6 +54,23 @@ class MainWindow(QMainWindow):
 
         root_layout.addLayout(content_layout)
         root_layout.addWidget(self.status_bar)
+
+    def _reload_weights(self):
+        self.model.reload_weights()
+        self.status_bar.lbl_status.setText("Status: Reloaded trained weights from mnist_weights.pt!")
+
+    def _open_neuron_inspector(self, layer_idx: int, neuron_idx: int, activation: float):
+        bias, in_w, out_w = self.model.get_neuron_details(layer_idx, neuron_idx)
+        dlg = NeuronInspectorDialog(
+            layer_idx=layer_idx,
+            neuron_idx=neuron_idx,
+            activation=activation,
+            bias=bias,
+            in_weights=in_w,
+            out_weights=out_w,
+            parent=self
+        )
+        dlg.exec()
 
     def _handle_canvas_update(self, image_data: np.ndarray):
         tensor_input = torch.from_numpy(image_data).float().unsqueeze(0)
@@ -60,7 +81,6 @@ class MainWindow(QMainWindow):
 
         self.right_panel.update_probabilities(probs)
 
-        # Extract intermediate layer activations
         l1 = torch.relu(self.model.activations["layer1"]).squeeze()
         l2 = torch.relu(self.model.activations["layer2"]).squeeze()
         l3 = F.softmax(self.model.activations["layer3"], dim=1).squeeze()

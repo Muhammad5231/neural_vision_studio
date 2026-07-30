@@ -1,8 +1,8 @@
-"""Hardware-accelerated Viewport with Frame Buffer Clearing and Smooth Zoom."""
+"""Hardware-accelerated Viewport with Frame Buffer Clearing and Click Inspection Signals."""
 
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsTextItem
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
-from PySide6.QtCore import Qt, QSequentialAnimationGroup, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QSequentialAnimationGroup, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, Signal
 from PySide6.QtGui import QPainter, QWheelEvent, QFont, QColor, QBrush
 
 from visualization.items.neuron_item import NeuronItem
@@ -11,16 +11,15 @@ from visualization.items.particle_item import ParticleItem
 from config import COLOR_BG_DARK
 
 class NetworkView(QGraphicsView):
+    neuron_clicked = Signal(int, int, float)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
-        # Hardware Acceleration Viewport
         gl_viewport = QOpenGLWidget()
         self.setViewport(gl_viewport)
-        
-        # CRITICAL FIX for Image 3: Set solid background brush to force OpenGL buffer clearing per frame
         self.setBackgroundBrush(QBrush(COLOR_BG_DARK))
         
         self.setRenderHints(
@@ -69,6 +68,7 @@ class NetworkView(QGraphicsView):
                 y = y_offset + (n_idx * y_spacing)
                 node = NeuronItem(layer_idx=layer_idx, neuron_idx=n_idx)
                 node.setPos(x, y)
+                node.clicked.connect(lambda l, n, a: self.neuron_clicked.emit(l, n, a))
                 self.scene.addItem(node)
                 self.nodes[(layer_idx, n_idx)] = node
 
@@ -84,7 +84,6 @@ class NetworkView(QGraphicsView):
         self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
 
     def stop_animations(self):
-        """Cancels running animation groups and cleans lingering particle nodes."""
         if self.current_anim_group and self.current_anim_group.state() == QSequentialAnimationGroup.State.Running:
             self.current_anim_group.stop()
             self.current_anim_group.clear()

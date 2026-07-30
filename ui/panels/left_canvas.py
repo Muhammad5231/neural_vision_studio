@@ -1,5 +1,7 @@
-"""Interactive Canvas with Center-of-Mass MNIST Formatting."""
+"""Interactive Drawing Canvas with Standalone Training Studio Process Launcher."""
 
+import sys
+import subprocess
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PySide6.QtGui import QPainter, QPen, QImage, QColor
 from PySide6.QtCore import Qt, QPoint, Signal, QTimer
@@ -68,28 +70,23 @@ class DrawingCanvas(QWidget):
         self._emit_processed_image()
 
     def _preprocess_mnist(self, gray_img: np.ndarray) -> np.ndarray:
-        """Standard MNIST Center-of-Mass normalization pipeline."""
         if np.max(gray_img) < 15:
             return np.zeros((MNIST_GRID_SIZE, MNIST_GRID_SIZE), dtype=np.float32)
 
-        # 1. Bounding box cropping
         coords = cv2.findNonZero(gray_img)
         x, y, w, h = cv2.boundingRect(coords)
         cropped = gray_img[y:y+h, x:x+w]
 
-        # 2. Aspect ratio scaling into 20x20 box
         max_dim = max(w, h)
         scale = 20.0 / max_dim
         new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
         resized = cv2.resize(cropped, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-        # 3. Canvas placement
         padded = np.zeros((28, 28), dtype=np.uint8)
         start_x = (28 - new_w) // 2
         start_y = (28 - new_h) // 2
         padded[start_y:start_y+new_h, start_x:start_x+new_w] = resized
 
-        # 4. Center of mass alignment
         M = cv2.moments(padded)
         if M["m00"] > 0:
             cx = M["m10"] / M["m00"]
@@ -113,6 +110,8 @@ class DrawingCanvas(QWidget):
 
 
 class LeftPanel(GlassCard):
+    reload_requested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(320)
@@ -132,8 +131,23 @@ class LeftPanel(GlassCard):
         
         btn_layout.addWidget(self.predict_btn)
         btn_layout.addWidget(self.clear_btn)
+
+        # Standalone Training Studio & Reload Buttons
+        self.btn_launch_trainer = QPushButton("Launch Training Studio")
+        self.btn_launch_trainer.setStyleSheet("background-color: #A855F7; color: white; font-weight: bold;")
+        self.btn_launch_trainer.clicked.connect(self._launch_training_app)
+
+        self.btn_reload = QPushButton("Reload Weights")
+        self.btn_reload.clicked.connect(lambda: self.reload_requested.emit())
         
         self.layout.addWidget(lbl_title)
         self.layout.addWidget(self.canvas, alignment=Qt.AlignmentFlag.AlignCenter)
         self.layout.addLayout(btn_layout)
+        self.layout.addSpacing(10)
+        self.layout.addWidget(self.btn_launch_trainer)
+        self.layout.addWidget(self.btn_reload)
         self.layout.addStretch()
+
+    def _launch_training_app(self):
+        """Launches standalone train.py in an isolated child process."""
+        subprocess.Popen([sys.executable, "train.py"])

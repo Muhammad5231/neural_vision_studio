@@ -1,4 +1,4 @@
-"""PyTorch Multilayer Perceptron with Auto-Training and Activation Hooks."""
+"""PyTorch Multilayer Perceptron with Weight Extraction for Inspector."""
 
 import os
 import torch
@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import cv2
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 class VisionMLP(nn.Module):
     def __init__(self, input_dim: int = 784, hidden1: int = 64, hidden2: int = 32, output_dim: int = 10):
@@ -19,16 +19,7 @@ class VisionMLP(nn.Module):
         
         self.activations: Dict[str, torch.Tensor] = {}
         self._register_hooks()
-        
-        # Train model if no weights saved locally
-        weights_path = "mnist_weights.pt"
-        if os.path.exists(weights_path):
-            try:
-                self.load_state_dict(torch.load(weights_path, weights_only=True))
-            except Exception:
-                self._train_synthetic_mnist(weights_path)
-        else:
-            self._train_synthetic_mnist(weights_path)
+        self.reload_weights()
 
     def _register_hooks(self):
         def get_hook(layer_name: str):
@@ -47,69 +38,33 @@ class VisionMLP(nn.Module):
         x = self.fc3(x)
         return x
 
-    def _train_synthetic_mnist(self, save_path: str):
-        """Generates synthetic digit prototypes and trains PyTorch MLP in < 0.3s."""
-        images = []
-        labels = []
+    def reload_weights(self):
+        """Reloads trained weights from disk if available."""
+        weights_path = "mnist_weights.pt"
+        if os.path.exists(weights_path):
+            try:
+                self.load_state_dict(torch.load(weights_path, weights_only=True))
+            except Exception:
+                pass
 
-        # Generate geometric stroke patterns for digits 0-9
-        for digit in range(10):
-            for variation in range(40):
-                img = np.zeros((28, 28), dtype=np.uint8)
-                thickness = np.random.randint(2, 4)
-                
-                if digit == 0:
-                    cv2.ellipse(img, (14, 14), (8 + np.random.randint(-1, 2), 10 + np.random.randint(-1, 2)), 0, 0, 360, 255, thickness)
-                elif digit == 1:
-                    cv2.line(img, (14 + np.random.randint(-1, 2), 5), (14 + np.random.randint(-1, 2), 23), 255, thickness)
-                elif digit == 2:
-                    cv2.polylines(img, [np.array([[6, 8], [20, 8], [6, 22], [22, 22]])], False, 255, thickness)
-                elif digit == 3:
-                    cv2.polylines(img, [np.array([[6, 6], [20, 6], [12, 14], [20, 20], [6, 22]])], False, 255, thickness)
-                elif digit == 4:
-                    cv2.polylines(img, [np.array([[18, 5], [6, 16], [22, 16]])], False, 255, thickness)
-                    cv2.line(img, (18, 5), (18, 23), 255, thickness)
-                elif digit == 5:
-                    cv2.polylines(img, [np.array([[20, 6], [7, 6], [7, 13], [20, 15], [20, 22], [6, 22]])], False, 255, thickness)
-                elif digit == 6:
-                    cv2.ellipse(img, (14, 17), (7, 6), 0, 0, 360, 255, thickness)
-                    cv2.line(img, (7, 17), (16, 6), 255, thickness)
-                elif digit == 7:
-                    cv2.line(img, (6, 6), (22, 6), 255, thickness)
-                    cv2.line(img, (22, 6), (10, 23), 255, thickness)
-                elif digit == 8:
-                    cv2.ellipse(img, (14, 10), (6, 5), 0, 0, 360, 255, thickness)
-                    cv2.ellipse(img, (14, 18), (7, 6), 0, 0, 360, 255, thickness)
-                elif digit == 9:
-                    cv2.ellipse(img, (14, 10), (6, 5), 0, 0, 360, 255, thickness)
-                    cv2.line(img, (20, 10), (12, 23), 255, thickness)
+    def get_neuron_details(self, layer_idx: int, neuron_idx: int) -> Tuple[float, list[float], list[float]]:
+        """Returns (bias, incoming_weights, outgoing_weights) for the Inspector."""
+        with torch.no_grad():
+            if layer_idx == 0:
+                bias = 0.0
+                in_w = []
+                out_w = self.fc1.weight[:, neuron_idx].tolist() if neuron_idx < 784 else []
+            elif layer_idx == 1:
+                bias = float(self.fc1.bias[neuron_idx]) if neuron_idx < len(self.fc1.bias) else 0.0
+                in_w = self.fc1.weight[neuron_idx, :5].tolist()
+                out_w = self.fc2.weight[:, neuron_idx].tolist() if neuron_idx < self.fc2.weight.shape[1] else []
+            elif layer_idx == 2:
+                bias = float(self.fc2.bias[neuron_idx]) if neuron_idx < len(self.fc2.bias) else 0.0
+                in_w = self.fc2.weight[neuron_idx, :5].tolist()
+                out_w = self.fc3.weight[:, neuron_idx].tolist() if neuron_idx < self.fc3.weight.shape[1] else []
+            else:
+                bias = float(self.fc3.bias[neuron_idx]) if neuron_idx < len(self.fc3.bias) else 0.0
+                in_w = self.fc3.weight[neuron_idx, :5].tolist()
+                out_w = []
 
-                # Add light Gaussian blur
-                img = cv2.GaussianBlur(img, (3, 3), 0)
-                norm_img = img.astype(np.float32) / 255.0
-                images.append(norm_img.flatten())
-                labels.append(digit)
-
-        X = torch.tensor(np.array(images), dtype=torch.float32)
-        y = torch.tensor(np.array(labels), dtype=torch.long)
-
-        optimizer = optim.Adam(self.parameters(), lr=0.01)
-        criterion = nn.CrossEntropyLoss()
-
-        self.train()
-        for epoch in range(120):
-            optimizer.zero_grad()
-            outputs = self(X)
-            loss = criterion(outputs, y)
-            loss.backward()
-            optimizer.step()
-
-        self.eval()
-        torch.save(self.state_dict(), save_path)
-
-    def get_layer_weights(self) -> List[torch.Tensor]:
-        return [
-            self.fc1.weight.detach(),
-            self.fc2.weight.detach(),
-            self.fc3.weight.detach()
-        ]
+            return bias, in_w, out_w
