@@ -1,4 +1,4 @@
-"""Interactive Drawing Canvas with MNIST Bounding-Box Centering and Clean Re-predictions."""
+"""Interactive Drawing Canvas with Center-of-Mass MNIST Normalization."""
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PySide6.QtGui import QPainter, QPen, QImage, QColor
@@ -20,10 +20,9 @@ class DrawingCanvas(QWidget):
         self.last_point = QPoint()
         self.brush_size = 22
 
-        # Debounce timer to trigger clean prediction after mouse stroke completes
         self.debounce_timer = QTimer(self)
         self.debounce_timer.setSingleShot(True)
-        self.debounce_timer.setInterval(300)
+        self.debounce_timer.setInterval(280)
         self.debounce_timer.timeout.connect(self._emit_processed_image)
 
     def mousePressEvent(self, event):
@@ -52,7 +51,7 @@ class DrawingCanvas(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drawing = False
-            self.debounce_timer.start(50)
+            self.debounce_timer.start(40)
 
     def paintEvent(self, event):
         canvas_painter = QPainter(self)
@@ -69,20 +68,22 @@ class DrawingCanvas(QWidget):
         self._emit_processed_image()
 
     def _preprocess_mnist(self, gray_img: np.ndarray) -> np.ndarray:
-        """Crops drawn digit bounding box and centers it into 28x28 grid like real MNIST."""
-        if np.max(gray_img) == 0:
+        if np.max(gray_img) < 10:
             return np.zeros((MNIST_GRID_SIZE, MNIST_GRID_SIZE), dtype=np.float32)
 
-        coords = cv2.findNonZero(gray_img)
+        # Smooth strokes and find bounding box
+        blurred = cv2.GaussianBlur(gray_img, (5, 5), 0)
+        coords = cv2.findNonZero(blurred)
         x, y, w, h = cv2.boundingRect(coords)
-        cropped = gray_img[y:y+h, x:x+w]
+        cropped = blurred[y:y+h, x:x+w]
 
-        # Aspect ratio resize to fit within 20x20 box inside 28x28 canvas
+        # Fit inside 20x20 bounding box
         max_dim = max(w, h)
         scale = 20.0 / max_dim
         new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
         resized = cv2.resize(cropped, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
+        # Center on 28x28 grid
         padded = np.zeros((28, 28), dtype=np.uint8)
         start_x = (28 - new_w) // 2
         start_y = (28 - new_h) // 2

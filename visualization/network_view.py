@@ -1,13 +1,14 @@
-"""Hardware-accelerated Viewport with Safe Animation Cancellation and Particle Cleanup."""
+"""Hardware-accelerated Viewport with Frame Buffer Clearing and Smooth Zoom."""
 
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsTextItem
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtCore import Qt, QSequentialAnimationGroup, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QPainter, QWheelEvent, QFont, QColor
+from PySide6.QtGui import QPainter, QWheelEvent, QFont, QColor, QBrush
 
 from visualization.items.neuron_item import NeuronItem
 from visualization.items.synapse_item import SynapseItem
 from visualization.items.particle_item import ParticleItem
+from config import COLOR_BG_DARK
 
 class NetworkView(QGraphicsView):
     def __init__(self, parent=None):
@@ -15,7 +16,13 @@ class NetworkView(QGraphicsView):
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
-        self.setViewport(QOpenGLWidget())
+        # Hardware Acceleration Viewport
+        gl_viewport = QOpenGLWidget()
+        self.setViewport(gl_viewport)
+        
+        # CRITICAL FIX for Image 3: Set solid background brush to force OpenGL buffer clearing per frame
+        self.setBackgroundBrush(QBrush(COLOR_BG_DARK))
+        
         self.setRenderHints(
             QPainter.RenderHint.Antialiasing |
             QPainter.RenderHint.SmoothPixmapTransform |
@@ -27,7 +34,7 @@ class NetworkView(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setStyleSheet("background: transparent; border: none;")
+        self.setStyleSheet("border: none;")
 
         self.current_scale = 1.0
         self.nodes = {}
@@ -77,7 +84,7 @@ class NetworkView(QGraphicsView):
         self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
 
     def stop_animations(self):
-        """Stops ongoing animation groups and clears lingering particle items from canvas."""
+        """Cancels running animation groups and cleans lingering particle nodes."""
         if self.current_anim_group and self.current_anim_group.state() == QSequentialAnimationGroup.State.Running:
             self.current_anim_group.stop()
             self.current_anim_group.clear()
@@ -88,9 +95,7 @@ class NetworkView(QGraphicsView):
         self.active_particles.clear()
 
     def animate_signal_flow(self, target_activations: dict[tuple[int, int], float]):
-        # Always clean up prior active animations
         self.stop_animations()
-
         self.current_anim_group = QSequentialAnimationGroup(self)
 
         for layer_idx in range(len(self.layers_config)):
@@ -100,7 +105,7 @@ class NetworkView(QGraphicsView):
                 target_val = target_activations.get((layer_idx, n_idx), 0.0)
                 
                 anim = QPropertyAnimation(node, b"activation")
-                anim.setDuration(180)
+                anim.setDuration(160)
                 anim.setStartValue(node.get_activation())
                 anim.setEndValue(target_val)
                 anim.setEasingCurve(QEasingCurve.Type.OutQuad)
@@ -118,7 +123,7 @@ class NetworkView(QGraphicsView):
                     self.active_particles.append(particle)
                     
                     p_anim = QPropertyAnimation(particle, b"progress")
-                    p_anim.setDuration(140)
+                    p_anim.setDuration(120)
                     p_anim.setStartValue(0.0)
                     p_anim.setEndValue(1.0)
                     p_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
